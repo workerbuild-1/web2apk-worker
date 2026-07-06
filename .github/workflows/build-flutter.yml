@@ -34,14 +34,112 @@ jobs:
 
       - name: Prepare Project
         run: |
-          # Payload contains URL or file info
-          # For URL mode:
-          URL=$(echo '${{ github.event.inputs.payload }}' | jq -r '.url')
-          if [ "$URL" != "null" ]; then
+          PAYLOAD='${{ github.event.inputs.payload }}'
+          URL=$(echo "$PAYLOAD" | jq -r '.url')
+          ZIP_ASSET_URL=$(echo "$PAYLOAD" | jq -r '.zipAssetUrl')
+          
+          if [ "$ZIP_ASSET_URL" != "null" ] && [ -n "$ZIP_ASSET_URL" ]; then
+            echo "Downloading project ZIP from GitHub Release..."
+            curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/octet-stream" -o project.zip "$ZIP_ASSET_URL"
+            unzip project.zip -d project
+          elif [ "$URL" != "null" ] && [ -n "$URL" ]; then
+            echo "Downloading project ZIP from URL..."
             wget -O project.zip "$URL"
             unzip project.zip -d project
-            cd project
+          else
+            echo "Error: No download URL found in payload" >&2
+            exit 1
           fi
+          
+          # Find actual project directory if nested
+          FLUTTER_ROOT=$(find project -maxdepth 5 -type f -name pubspec.yaml | head -n 1)
+          if [ -n "$FLUTTER_ROOT" ]; then
+            PROJECT_DIR=$(dirname "$FLUTTER_ROOT")
+            if [ "$PROJECT_DIR" != "project" ]; then
+              mv "$PROJECT_DIR"/* project/ 2>/dev/null || true
+              mv "$PROJECT_DIR"/.* project/ 2>/dev/null || true
+            fi
+          fi
+
+      - name: Configure Android Project
+        run: |
+          cd project
+          FLUTTER_BIN=$(which flutter)
+          FLUTTER_SDK_PATH=$(dirname $(dirname "$FLUTTER_BIN"))
+          
+          mkdir -p android
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          echo "flutter.sdk=$FLUTTER_SDK_PATH" >> android/local.properties
+          
+          cat > android/gradle.properties << GRADLE_PROPS
+          org.gradle.daemon=false
+          org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          org.gradle.configureondemand=true
+          android.useAndroidX=true
+          android.enableJetifier=true
+          kotlin.daemon.jvm.options=-Xmx1500m
+          GRADLE_PROPS
+          
+          if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
+            CURRENT_GRADLE=$(grep "distributionUrl" android/gradle/wrapper/gradle-wrapper.properties | grep -o 'gradle-[0-9.]*' | grep -o '[0-9.]*' || echo "0")
+            CURRENT_MINOR=$(echo "$CURRENT_GRADLE" | cut -d. -f2 || echo "0")
+            if [ "$CURRENT_MINOR" -lt 14 ] 2>/dev/null; then
+              echo "Upgrading Gradle wrapper: $CURRENT_GRADLE -> 8.14"
+              sed -i "s|gradle-[0-9.]*-all.zip|gradle-8.14-all.zip|" android/gradle/wrapper/gradle-wrapper.properties || true
+              sed -i "s|gradle-[0-9.]*-bin.zip|gradle-8.14-bin.zip|" android/gradle/wrapper/gradle-wrapper.properties || true
+            fi
+          fi
+          
+          cat << 'EOF' > patcher.py
+          import sys, re, os
+          target_agp    = sys.argv[1]
+          target_kotlin = sys.argv[2]
+          def replace_plugin_version(content, plugin_id, new_ver):
+              escaped_id = re.escape(plugin_id)
+              pat = r'(id\s*\(?\s*["\']' + escaped_id + r'["\']' + r'\s*\)?)\s+version\s+["\'][0-9.]+["\']'
+              return re.sub(pat, lambda m: m.group(1) + ' version "' + new_ver + '"', content)
+          for fname in ["android/settings.gradle.kts", "android/settings.gradle"]:
+              if not os.path.exists(fname):
+                  continue
+              with open(fname, "r", encoding="utf-8") as f:
+                  content = f.read()
+              orig = content
+              content = replace_plugin_version(content, "com.android.application", target_agp)
+              content = replace_plugin_version(content, "com.android.library", target_agp)
+              content = replace_plugin_version(content, "org.jetbrains.kotlin.android", target_kotlin)
+              if content != orig:
+                  with open(fname, "w", encoding="utf-8") as f:
+                      f.write(content)
+                  print("Patched " + fname + ": AGP=" + target_agp + " Kotlin=" + target_kotlin)
+          if os.path.exists("android/build.gradle"):
+              with open("android/build.gradle", "r", encoding="utf-8") as f:
+                  content = f.read()
+              orig = content
+              content = re.sub(r'com\.android\.tools\.build:gradle:[0-9.]+', 'com.android.tools.build:gradle:' + target_agp, content)
+              content = re.sub(r'ext\.kotlin_version\s*=\s*["\'][0-9.]+["\']', 'ext.kotlin_version = "' + target_kotlin + '"', content)
+              if content != orig:
+                  with open("android/build.gradle", "w", encoding="utf-8") as f:
+                      f.write(content)
+                  print("Patched android/build.gradle")
+          EOF
+          
+          FLUTTER_VERSION=$(flutter --version 2>/dev/null | grep -o 'Flutter [0-9][0-9]*[.][0-9][0-9]*[.][0-9][0-9]*' | grep -o '[0-9].*' || true)
+          if [ -z "$FLUTTER_VERSION" ]; then FLUTTER_VERSION="3.0.0"; fi
+          FLUTTER_MINOR=$(echo "$FLUTTER_VERSION" | cut -d. -f2 || echo "0")
+          if [ -z "$FLUTTER_MINOR" ]; then FLUTTER_MINOR=0; fi
+
+          TARGET_AGP="8.7.0"
+          TARGET_KOTLIN="2.1.0"
+          case "$FLUTTER_MINOR" in
+            4[4-9]|[5-9][0-9]) TARGET_AGP="8.11.1"; TARGET_KOTLIN="2.2.20" ;;
+            4[0-3])            TARGET_AGP="8.9.1";  TARGET_KOTLIN="2.1.0"  ;;
+          esac
+
+          echo "Flutter $FLUTTER_VERSION → target AGP=$TARGET_AGP Kotlin=$TARGET_KOTLIN"
+          python3 patcher.py "$TARGET_AGP" "$TARGET_KOTLIN" || echo "AGP patch warning (non-fatal)"
+          rm -f patcher.py
 
       - name: Build APK
         run: |

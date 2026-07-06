@@ -28,17 +28,38 @@ jobs:
 
       - name: Prepare Project
         run: |
-          URL=$(echo '${{ github.event.inputs.payload }}' | jq -r '.url')
-          if [ "$URL" != "null" ]; then
+          PAYLOAD='${{ github.event.inputs.payload }}'
+          URL=$(echo "$PAYLOAD" | jq -r '.url')
+          ZIP_ASSET_URL=$(echo "$PAYLOAD" | jq -r '.zipAssetUrl')
+          
+          if [ "$ZIP_ASSET_URL" != "null" ] && [ -n "$ZIP_ASSET_URL" ]; then
+            echo "Downloading project ZIP from GitHub Release..."
+            curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/octet-stream" -o project.zip "$ZIP_ASSET_URL"
+            unzip project.zip -d project
+          elif [ "$URL" != "null" ] && [ -n "$URL" ]; then
+            echo "Downloading project ZIP from URL..."
             wget -O project.zip "$URL"
             unzip project.zip -d project
-            cd project
+          else
+            echo "Error: No download URL found in payload" >&2
+            exit 1
+          fi
+          
+          # Find actual project directory if nested
+          ANDROID_ROOT=$(find project -maxdepth 5 -type f -name gradlew | head -n 1)
+          if [ -n "$ANDROID_ROOT" ]; then
+            PROJECT_DIR=$(dirname "$ANDROID_ROOT")
+            if [ "$PROJECT_DIR" != "project" ]; then
+              mv "$PROJECT_DIR"/* project/ 2>/dev/null || true
+              mv "$PROJECT_DIR"/.* project/ 2>/dev/null || true
+            fi
           fi
 
       - name: Build APK
         run: |
           cd project
           chmod +x gradlew
+          ./gradlew clean
           ./gradlew assembleRelease
 
       - name: Upload Artifact
