@@ -79,9 +79,11 @@ jobs:
                 MINOR=$(echo "$DART_VER" | cut -d. -f2)
                 
                 # Map Dart version to optimal Flutter version
-                if [ "$MAJOR" -eq 3 ]; then
+                if [ "$MAJOR" -gt 3 ]; then
+                  FLUTTER_VERSION=""
+                elif [ "$MAJOR" -eq 3 ]; then
                   if [ "$MINOR" -ge 8 ]; then
-                    FLUTTER_VERSION="3.29.0"
+                    FLUTTER_VERSION="" # Empty string triggers latest stable version
                   elif [ "$MINOR" -eq 7 ]; then
                     FLUTTER_VERSION="3.29.0"
                   elif [ "$MINOR" -eq 6 ]; then
@@ -96,7 +98,7 @@ jobs:
             fi
           fi
           
-          echo "Resolved Flutter Version: $FLUTTER_VERSION"
+          echo "Resolved Flutter Version: ${FLUTTER_VERSION:-latest stable}"
           echo "version=$FLUTTER_VERSION" >> $GITHUB_OUTPUT
 
       - name: Setup Flutter
