@@ -26,12 +26,6 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.22.0'
-          channel: 'stable'
-
       - name: Prepare Project
         run: |
           PAYLOAD='${{ github.event.inputs.payload }}'
@@ -60,6 +54,56 @@ jobs:
               mv "$PROJECT_DIR"/.* project/ 2>/dev/null || true
             fi
           fi
+
+      - name: Resolve Flutter Version
+        id: resolve-version
+        run: |
+          # Default fallback
+          FLUTTER_VERSION="3.29.0"
+          
+          # Check payload for flutterVersion
+          PAYLOAD='${{ github.event.inputs.payload }}'
+          PAYLOAD_VER=$(echo "$PAYLOAD" | jq -r '.flutterVersion // empty')
+          
+          if [ -n "$PAYLOAD_VER" ] && [ "$PAYLOAD_VER" != "null" ]; then
+            FLUTTER_VERSION="$PAYLOAD_VER"
+            echo "Using Flutter version from payload: $FLUTTER_VERSION"
+          elif [ -f "project/pubspec.yaml" ]; then
+            # Parse Dart SDK constraint from pubspec.yaml
+            SDK_LINE=$(grep "sdk:" project/pubspec.yaml | head -n 1 || true)
+            if [ -n "$SDK_LINE" ]; then
+              DART_VER=$(echo "$SDK_LINE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)
+              if [ -n "$DART_VER" ]; then
+                echo "Detected required Dart SDK: $DART_VER"
+                MAJOR=$(echo "$DART_VER" | cut -d. -f1)
+                MINOR=$(echo "$DART_VER" | cut -d. -f2)
+                
+                # Map Dart version to optimal Flutter version
+                if [ "$MAJOR" -eq 3 ]; then
+                  if [ "$MINOR" -ge 8 ]; then
+                    FLUTTER_VERSION="3.29.0"
+                  elif [ "$MINOR" -eq 7 ]; then
+                    FLUTTER_VERSION="3.29.0"
+                  elif [ "$MINOR" -eq 6 ]; then
+                    FLUTTER_VERSION="3.27.0"
+                  elif [ "$MINOR" -eq 5 ]; then
+                    FLUTTER_VERSION="3.24.0"
+                  else
+                    FLUTTER_VERSION="3.22.0"
+                  fi
+                fi
+              fi
+            fi
+          fi
+          
+          echo "Resolved Flutter Version: $FLUTTER_VERSION"
+          echo "version=$FLUTTER_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.resolve-version.outputs.version }}
+          channel: 'stable'
 
       - name: Configure Android Project
         run: |
