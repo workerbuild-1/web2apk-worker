@@ -119,13 +119,13 @@ jobs:
           
           cat > android/gradle.properties << GRADLE_PROPS
           org.gradle.daemon=false
-          org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError
+          org.gradle.jvmargs=-Xmx4608m -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError
           org.gradle.parallel=true
           org.gradle.caching=true
           org.gradle.configureondemand=true
           android.useAndroidX=true
           android.enableJetifier=true
-          kotlin.daemon.jvm.options=-Xmx1500m
+          kotlin.daemon.jvm.options=-Xmx2048m
           GRADLE_PROPS
           
           if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
