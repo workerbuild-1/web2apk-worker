@@ -58,8 +58,8 @@ jobs:
       - name: Resolve Flutter Version
         id: resolve-version
         run: |
-          # Default fallback
-          FLUTTER_VERSION="3.29.0"
+          # Default fallback (empty string triggers latest stable version)
+          FLUTTER_VERSION=""
           
           # Check payload for flutterVersion
           PAYLOAD='${{ github.event.inputs.payload }}'
@@ -83,7 +83,7 @@ jobs:
                   FLUTTER_VERSION=""
                 elif [ "$MAJOR" -eq 3 ]; then
                   if [ "$MINOR" -ge 8 ]; then
-                    FLUTTER_VERSION="" # Empty string triggers latest stable version
+                    FLUTTER_VERSION="" # Latest stable
                   elif [ "$MINOR" -eq 7 ]; then
                     FLUTTER_VERSION="3.29.0"
                   elif [ "$MINOR" -eq 6 ]; then
@@ -91,7 +91,8 @@ jobs:
                   elif [ "$MINOR" -eq 5 ]; then
                     FLUTTER_VERSION="3.24.0"
                   else
-                    FLUTTER_VERSION="3.22.0"
+                    # Fallback to latest stable to support modern packages even if project has low SDK constraint
+                    FLUTTER_VERSION=""
                   fi
                 fi
               fi
